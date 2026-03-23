@@ -2,6 +2,9 @@
 
 use WP_CLI\Formatter;
 use WP_CLI\Utils;
+use cli\table\Column;
+
+require_once __DIR__ . '/DB_Command_SQLite.php';
 
 /**
  * Performs basic database operations using credentials stored in wp-config.php.
@@ -26,6 +29,8 @@ use WP_CLI\Utils;
  * @when after_wp_config_load
  */
 class DB_Command extends WP_CLI_Command {
+
+	use DB_Command_SQLite;
 
 	/**
 	 * Legacy UTF-8 encoding for MySQL.
@@ -82,6 +87,12 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Database created.
 	 */
 	public function create( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			$this->sqlite_create();
+			return;
+		}
 
 		$this->run_query( self::get_create_query(), $assoc_args );
 
@@ -115,6 +126,15 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Database dropped.
 	 */
 	public function drop( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			$db_path = $this->get_sqlite_db_path();
+			WP_CLI::confirm( "Are you sure you want to drop the SQLite database at '{$db_path}'?", $assoc_args );
+			$this->sqlite_drop();
+			return;
+		}
+
 		WP_CLI::confirm( "Are you sure you want to drop the '" . DB_NAME . "' database?", $assoc_args );
 
 		$this->run_query( sprintf( 'DROP DATABASE `%s`', DB_NAME ), $assoc_args );
@@ -149,6 +169,15 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Database reset.
 	 */
 	public function reset( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			$db_path = $this->get_sqlite_db_path();
+			WP_CLI::confirm( "Are you sure you want to reset the SQLite database at '{$db_path}'?", $assoc_args );
+			$this->sqlite_reset();
+			return;
+		}
+
 		WP_CLI::confirm( "Are you sure you want to reset the '" . DB_NAME . "' database?", $assoc_args );
 
 		$this->run_query( sprintf( 'DROP DATABASE IF EXISTS `%s`', DB_NAME ), $assoc_args );
@@ -249,6 +278,12 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Database checked.
 	 */
 	public function check( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			WP_CLI::warning( 'Database check is not supported for SQLite databases.' );
+			return;
+		}
 
 		$command = sprintf(
 			'/usr/bin/env %s%s %s',
@@ -259,6 +294,12 @@ class DB_Command extends WP_CLI_Command {
 		WP_CLI::debug( "Running shell command: {$command}", 'db' );
 
 		$assoc_args['check'] = true;
+
+		// Pass --silent to mysqlcheck when in quiet mode.
+		if ( WP_CLI::get_config( 'quiet' ) ) {
+			$assoc_args['silent'] = true;
+		}
+
 		self::run(
 			Utils\esc_cmd( $command, DB_NAME ),
 			$assoc_args
@@ -298,6 +339,13 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Database optimized.
 	 */
 	public function optimize( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			WP_CLI::warning( 'Database optimization is not supported for SQLite databases. SQLite automatically optimizes on VACUUM.' );
+			return;
+		}
+
 		$command = sprintf(
 			'/usr/bin/env %s%s %s',
 			Utils\get_sql_check_command(),
@@ -307,6 +355,12 @@ class DB_Command extends WP_CLI_Command {
 		WP_CLI::debug( "Running shell command: {$command}", 'db' );
 
 		$assoc_args['optimize'] = true;
+
+		// Pass --silent to mysqlcheck when in quiet mode.
+		if ( WP_CLI::get_config( 'quiet' ) ) {
+			$assoc_args['silent'] = true;
+		}
+
 		self::run(
 			Utils\esc_cmd( $command, DB_NAME ),
 			$assoc_args
@@ -346,6 +400,13 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Database repaired.
 	 */
 	public function repair( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			WP_CLI::warning( 'Database repair is not supported for SQLite databases.' );
+			return;
+		}
+
 		$command = sprintf(
 			'/usr/bin/env %s%s %s',
 			Utils\get_sql_check_command(),
@@ -355,6 +416,12 @@ class DB_Command extends WP_CLI_Command {
 		WP_CLI::debug( "Running shell command: {$command}", 'db' );
 
 		$assoc_args['repair'] = true;
+
+		// Pass --silent to mysqlcheck when in quiet mode.
+		if ( WP_CLI::get_config( 'quiet' ) ) {
+			$assoc_args['silent'] = true;
+		}
+
 		self::run(
 			Utils\esc_cmd( $command, DB_NAME ),
 			$assoc_args
@@ -396,6 +463,12 @@ class DB_Command extends WP_CLI_Command {
 	 * @alias connect
 	 */
 	public function cli( $_, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			WP_CLI::warning( 'Interactive console (cli) is not supported for SQLite databases. Use `wp db query` instead.' );
+			return;
+		}
 
 		$command = sprintf(
 			'/usr/bin/env %s%s --no-auto-rehash',
@@ -409,7 +482,7 @@ class DB_Command extends WP_CLI_Command {
 		}
 
 		WP_CLI::debug( 'Associative arguments: ' . json_encode( $assoc_args ), 'db' );
-		self::run( $command, $assoc_args, null, true );
+		self::run( $command, $assoc_args, false, true );
 	}
 
 	/**
@@ -499,6 +572,27 @@ class DB_Command extends WP_CLI_Command {
 	 *     +---------+-----------------------+
 	 */
 	public function query( $args, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
+		if ( $this->is_sqlite() ) {
+			// Get the query from args or STDIN.
+			$query = '';
+			if ( ! empty( $args ) ) {
+				$query = $args[0];
+			} else {
+				$query = stream_get_contents( STDIN );
+			}
+
+			if ( empty( $query ) ) {
+				WP_CLI::error( 'No query specified.' );
+			}
+
+			$this->sqlite_query( $query, $assoc_args );
+			return;
+		}
+
+		// Preserve the original defaults flag value before get_defaults_flag_string modifies $assoc_args.
+		$original_assoc_args_for_sql_mode = $assoc_args;
 
 		$command = sprintf(
 			'/usr/bin/env %s%s --no-auto-rehash',
@@ -516,28 +610,27 @@ class DB_Command extends WP_CLI_Command {
 
 		if ( isset( $assoc_args['execute'] ) ) {
 			// Ensure that the SQL mode is compatible with WPDB.
-			$assoc_args['execute'] = $this->get_sql_mode_query( $assoc_args ) . $assoc_args['execute'];
+			$assoc_args['execute'] = $this->get_sql_mode_query( $original_assoc_args_for_sql_mode ) . $assoc_args['execute'];
 		}
 
-		$is_row_modifying_query = isset( $assoc_args['execute'] ) && preg_match( '/\b(UPDATE|DELETE|INSERT|REPLACE|LOAD DATA)\b/i', $assoc_args['execute'] );
+		$is_row_modifying_query = isset( $assoc_args['execute'] ) && preg_match( '/\b(UPDATE|DELETE|INSERT|REPLACE(?!\s*\()|LOAD DATA)\b/i', $assoc_args['execute'] );
 
 		if ( $is_row_modifying_query ) {
 			$assoc_args['execute'] .= '; SELECT ROW_COUNT();';
 		}
 
 		WP_CLI::debug( 'Associative arguments: ' . json_encode( $assoc_args ), 'db' );
-		list( $stdout, $stderr, $exit_code ) = self::run( $command, $assoc_args, false );
-
-		if ( $exit_code ) {
-			WP_CLI::error( "Query failed: {$stderr}" );
-		}
 
 		if ( $is_row_modifying_query ) {
-			$output_lines  = explode( "\n", trim( $stdout ) );
-			$affected_rows = (int) trim( end( $output_lines ) );
+			list( $stdout, $stderr, $exit_code ) = self::run( $command, $assoc_args, false );
+			$output_lines                        = explode( "\n", trim( $stdout ) );
+			$affected_rows                       = (int) trim( end( $output_lines ) );
+			if ( $exit_code ) {
+				WP_CLI::error( "Query failed: {$stderr}" );
+			}
 			WP_CLI::success( "Query succeeded. Rows affected: {$affected_rows}" );
-		} elseif ( ! empty( $stdout ) ) {
-			WP_CLI::line( $stdout );
+		} else {
+			self::run( $command, $assoc_args );
 		}
 	}
 
@@ -630,14 +723,22 @@ class DB_Command extends WP_CLI_Command {
 	 * @alias dump
 	 */
 	public function export( $args, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
 		if ( ! empty( $args[0] ) ) {
 			$result_file = $args[0];
 		} else {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.rand_mt_rand -- WordPress is not loaded.
-			$hash        = substr( md5( mt_rand() ), 0, 7 );
+			$hash        = substr( md5( (string) mt_rand() ), 0, 7 );
 			$result_file = sprintf( '%s-%s-%s.sql', DB_NAME, date( 'Y-m-d' ), $hash ); // phpcs:ignore WordPress.DateTime.RestrictedFunctions.date_date
 
 		}
+
+		if ( $this->is_sqlite() ) {
+			$this->sqlite_export( $result_file, $assoc_args );
+			return;
+		}
+
 		$stdout    = ( '-' === $result_file );
 		$porcelain = Utils\get_flag_value( $assoc_args, 'porcelain' );
 
@@ -709,7 +810,7 @@ class DB_Command extends WP_CLI_Command {
 			}
 		}
 
-		$escaped_command = call_user_func_array( '\WP_CLI\Utils\esc_cmd', array_merge( [ $command ], $command_esc_args ) );
+		$escaped_command = Utils\esc_cmd( $command, ...$command_esc_args );
 
 		// Remove parameters not needed for SQL run.
 		unset( $assoc_args['porcelain'] );
@@ -727,7 +828,7 @@ class DB_Command extends WP_CLI_Command {
 	/**
 	 * Get the current character set of the posts table.
 	 *
-	 * @param array Associative array of associative arguments.
+	 * @param array $assoc_args Associative arguments.
 	 * @return string Posts table character set.
 	 */
 	private function get_posts_table_charset( $assoc_args ) {
@@ -799,11 +900,21 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Imported from 'wordpress_dbase.sql'.
 	 */
 	public function import( $args, $assoc_args ) {
+		$this->maybe_load_sqlite_dropin();
+
 		if ( ! empty( $args[0] ) ) {
 			$result_file = $args[0];
 		} else {
 			$result_file = sprintf( '%s.sql', DB_NAME );
 		}
+
+		if ( $this->is_sqlite() ) {
+			$this->sqlite_import( $result_file, $assoc_args );
+			return;
+		}
+
+		// Preserve the original defaults flag value before get_defaults_flag_string modifies $assoc_args.
+		$original_assoc_args_for_sql_mode = $assoc_args;
 
 		// Process options to MySQL.
 		$mysql_args = array_merge(
@@ -821,7 +932,7 @@ class DB_Command extends WP_CLI_Command {
 				? 'SOURCE %s;'
 				: 'SET autocommit = 0; SET unique_checks = 0; SET foreign_key_checks = 0; SOURCE %s; COMMIT;';
 
-			$query = $this->get_sql_mode_query( $assoc_args ) . $query;
+			$query = $this->get_sql_mode_query( $original_assoc_args_for_sql_mode ) . $query;
 
 			$mysql_args['execute'] = sprintf( $query, $result_file );
 		} else {
@@ -891,6 +1002,9 @@ class DB_Command extends WP_CLI_Command {
 	 *     Success: Exported to wordpress_dbase.sql
 	 *
 	 * @when after_wp_load
+	 *
+	 * @param array<string> $args Positional arguments.
+	 * @param array{scope?: string, network?: bool, 'all-tables-with-prefix'?: bool, 'all-tables'?: bool, format: string} $assoc_args Associative arguments.
 	 */
 	public function tables( $args, $assoc_args ) {
 
@@ -1042,6 +1156,9 @@ class DB_Command extends WP_CLI_Command {
 	 *     6
 	 *
 	 * @when after_wp_load
+	 *
+	 * @param array $args Positional arguments. Unused.
+	 * @param array{size_format?: string, tables?: bool, 'human-readable'?: bool, format?: string, scope?: string, network?: bool, decimals?: string, 'all-tables-with-prefix'?: bool, 'all-tables'?: bool, order: string, orderby: string} $assoc_args Associative arguments.
 	 */
 	public function size( $args, $assoc_args ) {
 		global $wpdb;
@@ -1075,19 +1192,30 @@ class DB_Command extends WP_CLI_Command {
 
 		$default_unit = ( empty( $size_format ) && ! $human_readable ) ? ' B' : '';
 
+		$is_sqlite = $this->is_sqlite();
+
 		if ( $tables || $all_tables || $all_tables_with_prefix ) {
 
 			// Add all of the table sizes.
 			foreach ( Utils\wp_get_table_names( $args, $assoc_args ) as $table_name ) {
 
 				// Get the table size.
-				$table_bytes = $wpdb->get_var(
-					$wpdb->prepare(
-						'SELECT SUM(data_length + index_length) FROM information_schema.TABLES where table_schema = %s and Table_Name = %s GROUP BY Table_Name LIMIT 1',
-						DB_NAME,
-						$table_name
-					)
-				);
+				if ( $is_sqlite ) {
+					$table_bytes = $wpdb->get_var(
+						$wpdb->prepare(
+							'SELECT SUM(pgsize) as size_in_bytes FROM dbstat where name = %s LIMIT 1',
+							$table_name
+						)
+					);
+				} else {
+					$table_bytes = $wpdb->get_var(
+						$wpdb->prepare(
+							'SELECT SUM(data_length + index_length) FROM information_schema.TABLES where table_schema = %s and Table_Name = %s GROUP BY Table_Name LIMIT 1',
+							DB_NAME,
+							$table_name
+						)
+					);
+				}
 
 				// Add the table size to the list.
 				$rows[] = [
@@ -1099,20 +1227,29 @@ class DB_Command extends WP_CLI_Command {
 		} else {
 
 			// Get the database size.
-			$db_bytes = $wpdb->get_var(
-				$wpdb->prepare(
-					'SELECT SUM(data_length + index_length) FROM information_schema.TABLES where table_schema = %s GROUP BY table_schema;',
-					DB_NAME
-				)
-			);
+			if ( $is_sqlite ) {
+				$db_bytes = $this->sqlite_size();
+				$db_path  = $this->get_sqlite_db_path();
+				$db_name  = $db_path ? basename( $db_path ) : '';
+			} else {
+				$db_bytes = $wpdb->get_var(
+					$wpdb->prepare(
+						'SELECT SUM(data_length + index_length) FROM information_schema.TABLES where table_schema = %s GROUP BY table_schema;',
+						DB_NAME
+					)
+				);
+				$db_name  = DB_NAME;
+			}
 
 			// Add the database size to the list.
 			$rows[] = [
-				'Name'  => DB_NAME,
+				'Name'  => $db_name,
 				'Size'  => strtoupper( $db_bytes ) . $default_unit,
 				'Bytes' => strtoupper( $db_bytes ),
 			];
 		}
+
+		$size_format_display = '';
 
 		if ( ! empty( $size_format ) || $human_readable ) {
 			foreach ( $rows as $index => $row ) {
@@ -1132,8 +1269,14 @@ class DB_Command extends WP_CLI_Command {
 				// phpcs:enable
 
 				if ( $human_readable ) {
-					$size_key = floor( log( $row['Size'] ) / log( 1000 ) );
+					$size_key = floor( log( (float) $row['Size'] ) / log( 1000 ) );
 					$sizes    = [ 'B', 'KB', 'MB', 'GB', 'TB' ];
+
+					if ( is_infinite( $size_key ) ) {
+						$size_key = 0;
+					}
+
+					$size_key = (int) $size_key;
 
 					$size_format = isset( $sizes[ $size_key ] ) ? $sizes[ $size_key ] : $sizes[0];
 				}
@@ -1184,7 +1327,7 @@ class DB_Command extends WP_CLI_Command {
 				}
 					$size_format_display = preg_replace( '/IB$/u', 'iB', strtoupper( $size_format ) );
 
-					$decimals               = Utils\get_flag_value( $assoc_args, 'decimals', 0 );
+					$decimals               = (int) Utils\get_flag_value( $assoc_args, 'decimals', 0 );
 					$rows[ $index ]['Size'] = round( (int) $row['Bytes'] / $divisor, $decimals ) . ' ' . $size_format_display;
 			}
 		}
@@ -1192,7 +1335,6 @@ class DB_Command extends WP_CLI_Command {
 		if ( ! empty( $size_format ) && ! $tables && ! $format && ! $human_readable && true !== $all_tables && true !== $all_tables_with_prefix ) {
 			WP_CLI::line( str_replace( " {$size_format_display}", '', $rows[0]['Size'] ) );
 		} else {
-
 			// Sort the rows by user input
 			if ( $orderby ) {
 				usort(
@@ -1203,7 +1345,7 @@ class DB_Command extends WP_CLI_Command {
 						list( $first, $second ) = $orderby_array;
 
 						if ( 'size' === $orderby ) {
-							return $first['Bytes'] > $second['Bytes'];
+							return $first['Bytes'] <=> $second['Bytes'];
 						}
 
 						return strcmp( $first['Name'], $second['Name'] );
@@ -1213,7 +1355,8 @@ class DB_Command extends WP_CLI_Command {
 
 			// Display the rows.
 			$args = [
-				'format' => $format,
+				'format'     => $format,
+				'alignments' => [ 'Size' => Column::ALIGN_RIGHT ],
 			];
 
 			$formatter = new Formatter( $args, $fields );
@@ -1428,6 +1571,10 @@ class DB_Command extends WP_CLI_Command {
 		$after_context = Utils\get_flag_value( $assoc_args, 'after_context', 40 );
 		$after_context = '' === $after_context ? $after_context : (int) $after_context;
 
+		$default_regex_delimiter = false;
+		$regex_flags             = false;
+		$regex_delimiter         = '';
+
 		$regex = Utils\get_flag_value( $assoc_args, 'regex', false );
 		if ( false !== $regex ) {
 			$regex_flags             = Utils\get_flag_value( $assoc_args, 'regex-flags', false );
@@ -1481,7 +1628,7 @@ class DB_Command extends WP_CLI_Command {
 			$esc_like_search = '%' . Utils\esc_like( $search ) . '%';
 		}
 
-		$encoding = null;
+		$encoding = false;
 		if ( 0 === strpos( $wpdb->charset, self::ENCODING_UTF8 ) ) {
 			$encoding = 'UTF-8';
 		}
@@ -1489,6 +1636,7 @@ class DB_Command extends WP_CLI_Command {
 		$tables = Utils\wp_get_table_names( $args, $assoc_args );
 
 		$search_results = [];
+		$is_sqlite      = $this->is_sqlite();
 
 		$start_search_time = microtime( true );
 
@@ -1500,8 +1648,8 @@ class DB_Command extends WP_CLI_Command {
 			if ( ! $text_columns ) {
 				if ( $stats ) {
 					$skipped[] = $table;
-					// Don't bother warning for term relationships (which is just 3 int columns).
-				} elseif ( ! preg_match( '/_term_relationships$/', $table ) ) {
+					// Don't bother warning for term relationships (which is just 3 int columns) or SQLite.
+				} elseif ( ! preg_match( '/_term_relationships$/', $table ) && ! $is_sqlite ) {
 					WP_CLI::warning( $primary_keys ? "No text columns for table '$table' - skipped." : "No primary key or text columns for table '$table' - skipped." );
 				}
 				continue;
@@ -1561,7 +1709,7 @@ class DB_Command extends WP_CLI_Command {
 								}
 								if ( $after_context ) {
 									$end_offset = $offset + strlen( $match );
-									$after      = \cli\safe_substr( substr( $col_val, $end_offset ), 0, $after_context, false /*is_width*/, $col_encoding );
+									$after      = (string) \cli\safe_substr( substr( $col_val, $end_offset ), 0, $after_context, false /*is_width*/, $col_encoding );
 									// To lessen context duplication in output, shorten the after context if it overlaps with the next match.
 									if ( $i + 1 < $match_cnt && $end_offset + strlen( $after ) > $matches[0][ $i + 1 ][1] ) {
 										$after           = substr( $after, 0, $matches[0][ $i + 1 ][1] - $end_offset );
@@ -1723,7 +1871,12 @@ class DB_Command extends WP_CLI_Command {
 		);
 
 		$formatter_fields = [ 'Field', 'Type', 'Null', 'Key', 'Default', 'Extra' ];
-		$formatter_args   = [
+
+		if ( $this->is_sqlite() ) {
+			$formatter_fields = [ 'Field', 'Type', 'Null', 'Key', 'Default' ];
+		}
+
+		$formatter_args = [
 			'format' => $format,
 		];
 
@@ -1753,8 +1906,11 @@ class DB_Command extends WP_CLI_Command {
 	 * @param array  $assoc_args Optional. Associative array of arguments.
 	 */
 	protected function run_query( $query, $assoc_args = [] ) {
+		// Preserve the original defaults flag value before get_defaults_flag_string modifies $assoc_args.
+		$original_assoc_args_for_sql_mode = $assoc_args;
+
 		// Ensure that the SQL mode is compatible with WPDB.
-		$query = $this->get_sql_mode_query( $assoc_args ) . $query;
+		$query = $this->get_sql_mode_query( $original_assoc_args_for_sql_mode ) . $query;
 
 		WP_CLI::debug( "Query: {$query}", 'db' );
 
@@ -1805,7 +1961,7 @@ class DB_Command extends WP_CLI_Command {
 			$required['default-character-set'] = constant( 'DB_CHARSET' );
 		}
 
-		// Using 'dbuser' as option name to workaround clash with WP-CLI's global WP 'user' parameter, with 'dbpass' also available for tidyness.
+		// Using 'dbuser' as option name to workaround clash with WP-CLI's global WP 'user' parameter, with 'dbpass' also available for tidiness.
 		if ( isset( $assoc_args['dbuser'] ) ) {
 			$required['user'] = $assoc_args['dbuser'];
 			unset( $assoc_args['dbuser'] );
@@ -1857,7 +2013,7 @@ class DB_Command extends WP_CLI_Command {
 	 * Gets the column names of a db table differentiated into key columns and text columns and all columns.
 	 *
 	 * @param string $table The table name.
-	 * @return array A 3 element array consisting of an array of primary key column names, an array of text column names, and an array containing all column names.
+	 * @return array{0: string[], 1: string[], 2: string[]} A 3 element array consisting of an array of primary key column names, an array of text column names, and an array containing all column names.
 	 */
 	private static function get_columns( $table ) {
 		global $wpdb;
@@ -1890,7 +2046,7 @@ class DB_Command extends WP_CLI_Command {
 	/**
 	 * Determines whether a column is considered text or not.
 	 *
-	 * @param string Column type.
+	 * @param string $type Column type.
 	 * @return bool True if text column, false otherwise.
 	 */
 	private static function is_text_col( $type ) {
@@ -1909,6 +2065,8 @@ class DB_Command extends WP_CLI_Command {
 	 *
 	 * @param string|array $idents A single identifier or an array of identifiers.
 	 * @return string|array An escaped string if given a string, or an array of escaped strings if given an array of strings.
+	 *
+	 * @phpstan-return ($idents is string ? string : array)
 	 */
 	private static function esc_sql_ident( $idents ) {
 		$backtick = static function ( $v ) {
@@ -2043,6 +2201,7 @@ class DB_Command extends WP_CLI_Command {
 			'ssl-fips-mode',
 			'ssl-key',
 			'ssl-mode',
+			'ssl-verify-server-cert',
 			'syslog',
 			'table',
 			'tee',
@@ -2153,13 +2312,11 @@ class DB_Command extends WP_CLI_Command {
 		static $modes = null;
 
 		// Make sure the provided arguments don't interfere with the expected
-		// output here.
-		$args = [];
-		foreach ( [] as $arg ) {
-			if ( isset( $assoc_args[ $arg ] ) ) {
-				$args[ $arg ] = $assoc_args[ $arg ];
-			}
-		}
+		// output here, while preserving all valid MySQL connection arguments
+		// (including --defaults, --host, --port, --ssl-* options) so that SQL
+		// mode discovery connects to the database with the same configuration
+		// as the main query.
+		$args = self::get_mysql_args( $assoc_args );
 
 		if ( null === $modes ) {
 			$modes = [];
@@ -2183,16 +2340,13 @@ class DB_Command extends WP_CLI_Command {
 			}
 
 			if ( ! empty( $stdout ) ) {
+				$lines = preg_split( "/\r\n|\n|\r|,/", $stdout );
 				$modes = array_filter(
 					array_map(
 						'trim',
-						preg_split( "/\r\n|\n|\r|,/", $stdout )
+						$lines ? $lines : []
 					)
 				);
-			}
-
-			if ( false === $modes ) {
-				$modes = [];
 			}
 		}
 

@@ -21,6 +21,8 @@ Feature: Query the database with WordPress' MySQL config
       1
       """
 
+  # SQLite doesn't support the --html option nor different dbuser.
+  @require-mysql-or-mariadb
   Scenario: Database querying with passed-in options
     Given a WP install
 
@@ -38,6 +40,8 @@ Feature: Query the database with WordPress' MySQL config
       """
     And STDOUT should be empty
 
+  # SQLite doesn't support the --html option nor different dbuser.
+  @require-mysql-or-mariadb
   Scenario: Database querying with MySQL defaults and passed-in options
     Given a WP install
 
@@ -55,6 +59,8 @@ Feature: Query the database with WordPress' MySQL config
       """
     And STDOUT should be empty
 
+  # SQLite doesn't support the --html option nor different dbuser.
+  @require-mysql-or-mariadb
   Scenario: Database querying with --nodefaults and passed-in options
     Given a WP install
 
@@ -72,6 +78,7 @@ Feature: Query the database with WordPress' MySQL config
       """
     And STDOUT should be empty
 
+  @require-mysql-or-mariadb
   Scenario: MySQL defaults are available as appropriate with --defaults flag
     Given a WP install
 
@@ -83,6 +90,22 @@ Feature: Query the database with WordPress' MySQL config
 
     When I try `wp db query --no-defaults --debug`
     Then STDERR should match #Debug \(db\): Running shell command: /usr/bin/env (mysql|mariadb) --no-defaults --no-auto-rehash#
+
+  Scenario: SQL mode discovery respects --defaults flag
+    Given a WP install
+
+    When I try `wp db query "SELECT 1;" --defaults --debug`
+    Then STDERR should match #Running shell command: /usr/bin/env (mysql|mariadb) --no-auto-rehash#
+    And STDERR should not match #Running shell command: /usr/bin/env (mysql|mariadb) --no-defaults#
+
+    When I try `wp db query "SELECT 1;" --debug`
+    Then STDERR should match #Running shell command: /usr/bin/env (mysql|mariadb) --no-defaults --no-auto-rehash#
+
+  Scenario: SQL mode discovery preserves MySQL connection arguments
+    Given a WP install
+
+    When I try `wp db query "SELECT 1;" --host=testhost --port=3307 --debug`
+    Then STDERR should match #Running shell command: .* --host=testhost.*--port=3307#
 
   Scenario: SQL modes do not include any of the modes incompatible with WordPress
     Given a WP install
